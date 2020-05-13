@@ -24,6 +24,8 @@
 
 #include <libvmi/libvmi.h>
 #include <libvmi/peparse.h>
+#include <libvmi/events.h>
+
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
@@ -34,8 +36,19 @@
 #include <glib.h>
 #include <signal.h>
 
+reg_t sysenter_ip = 0;
 vmi_instance_t vmi;
 GHashTable* config;
+vmi_event_t cr3_event;
+vmi_event_t msr_syscall_sysenter_event;
+
+vmi_event_t msr_event;
+
+event_response_t msr_write_cb(vmi_instance_t vmi, vmi_event_t *event)
+{
+    printf("MSR write happened: MSR=%x Value=%lx\n", event->reg_event.msr, event->reg_event.value);
+    return 0;
+}
 
 void clean_up(void)
 {
@@ -49,6 +62,67 @@ void sigint_handler()
 {
     clean_up();
     exit(1);
+}
+
+int borks = 0;
+
+event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
+{
+    if (event->vcpu_id != 0) {
+        /* LibVMI initialization procedure strongly
+	 * relies on reading CPU context for VCPU 0
+	 * so we only do care about this one. */
+        return VMI_EVENT_RESPONSE_NONE;
+    }
+
+    reg_t gs_base;
+    addr_t phys_gs;
+
+    /*
+     * Get current GS_BASE and translate its VA to PA using current CR3.
+     * This may fail if our current DTB is a user-mode version with
+     * KPTI hardening.
+     */
+    if (VMI_FAILURE == vmi_get_vcpureg(vmi, &gs_base, GS_BASE, 0)) {
+        printf("failed to get GS_BASE cpureg\n");
+	return VMI_EVENT_RESPONSE_NONE;
+    }
+
+    if (VMI_FAILURE == vmi_pagetable_lookup(vmi, event->reg_event.value, gs_base + 0x40, &phys_gs)) {
+        printf("failed to make V2P translation of GS_BASE=%llx with CR3=%llx\n", gs_base, event->reg_event.value);
+	//borks = 1;
+	//vmi_pause_vm(vmi);
+	return VMI_EVENT_RESPONSE_NONE;
+    }
+
+    /*
+     * Check if we can dereference GS:[0] pointer using current DTB.
+     */
+    uint64_t val;
+    if (VMI_FAILURE == vmi_read_64_pa(vmi, phys_gs, &val)) {
+        printf("failed to read physical memory under GS_BASE\n");
+	return VMI_EVENT_RESPONSE_NONE;
+    }
+
+    uint64_t val2;
+    if (VMI_FAILURE == vmi_pagetable_lookup(vmi, event->reg_event.value, val, &val2)) {
+        printf("failed to make V2P translation for GS:[0], val=%llx\n", val2);
+	return VMI_EVENT_RESPONSE_NONE;
+    }
+
+    uint64_t val3;
+    if (VMI_FAILURE == vmi_read_64_pa(vmi, val2, &val3)) {
+        printf("failed to read PID\n");
+	return VMI_EVENT_RESPONSE_NONE;
+    }
+
+    printf("val: cr3=%llx gs_base=%llx gs_ptr=%llx gs_pa=%llx gs_ptr_pa=%llx pid=%llx\n", event->reg_event.value, gs_base, val, phys_gs, val2, val3);
+    //borks = 1;
+
+    //vmi_clear_event(vmi, event, NULL);
+    //vmi_pause_vm(vmi);
+
+    return VMI_EVENT_RESPONSE_NONE;
 }
 
 int main(int argc, char **argv)
@@ -91,18 +165,10 @@ int main(int argc, char **argv)
         return 1;
 
     /* initialize the libvmi library */
-    if (VMI_FAILURE == vmi_init(&vmi, mode, domain, init_flags, NULL, NULL)) {
+    if (VMI_FAILURE == vmi_init(&vmi, mode, domain, init_flags | VMI_INIT_EVENTS, NULL, NULL)) {
         printf("Failed to init LibVMI library.\n");
         return 1;
     }
-
-    /* pause the vm for consistent memory access */
-    if (vmi_pause_vm(vmi) != VMI_SUCCESS) {
-        printf("Failed to pause VM\n");
-        goto done;
-    } // if
-
-    signal(SIGINT, sigint_handler);
 
     config = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     if (!config) {
@@ -117,6 +183,45 @@ int main(int argc, char **argv)
         printf("Failed to init LibVMI paging.\n");
         goto done;
     }
+
+    memset(&cr3_event, 0, sizeof(vmi_event_t));
+    cr3_event.version = VMI_EVENTS_VERSION;
+    cr3_event.type = VMI_EVENT_REGISTER;
+    cr3_event.reg_event.reg = CR3;
+    cr3_event.reg_event.in_access = VMI_REGACCESS_W;
+    cr3_event.callback = cr3_cb;
+
+    memset(&msr_event, 0, sizeof(vmi_event_t));
+    msr_event.version = VMI_EVENTS_VERSION;
+    msr_event.type = VMI_EVENT_REGISTER;
+    msr_event.reg_event.reg = MSR_ALL;
+    //msr_event.reg_event.msr = MSR_SHADOW_GS_BASE;
+    msr_event.reg_event.in_access = VMI_REGACCESS_W;
+    msr_event.callback = msr_write_cb;
+
+    signal(SIGINT, sigint_handler);
+
+    /* if (VMI_FAILURE == vmi_register_event(vmi, &msr_event))
+    {
+        printf("omg\n");
+    } */
+
+    if (VMI_FAILURE == vmi_register_event(vmi, &cr3_event))
+    {
+        printf("failed to register event for cr3\n");
+    }
+
+    int failed = 0;
+    while(!failed && !borks) {
+        if (VMI_FAILURE == vmi_events_listen(vmi, 500)) {
+            printf("event listen failed\n");
+	    failed = true;
+	}
+    }
+
+    printf("borks\n");
+ 
+    // the vm is already paused if we've got here
 
     os_t os = vmi_init_os(vmi, VMI_CONFIG_GHASHTABLE, config, NULL);
     if (VMI_OS_WINDOWS != os) {

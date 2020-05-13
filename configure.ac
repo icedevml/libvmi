@@ -270,6 +270,8 @@ PKG_CHECK_MODULES([JSONC], [json-c], [have_jsonc='yes'], [have_jsonc='no'])
         [#include <xenctrl.h> #include <xen/hvm/save.h>])
 
     AC_DEFINE([ENABLE_XEN], [1], [Define to 1 to enable Xen support.])
+    AC_DEFINE([VMI_DEBUG], [__VMI_DEBUG_ALL], [lol])
+    AC_DEFINE([ENV_DEBUG], [1], [lol2])
 
     [if test "$with_xenstore" = "yes"]
     [then]

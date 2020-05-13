@@ -1193,7 +1193,8 @@ init_from_kdbg(
     // We don't have the standard config informations
     // so lets try our kdbg search method
 find_kdbg:
-    dbprint(VMI_DEBUG_MISC, "**Attempting KdDebuggerDataBlock search methods\n");
+    dbprint(VMI_DEBUG_MISC, "**NOT Attempting KdDebuggerDataBlock search methods\n");
+    goto exit;
 
     if (VMI_SUCCESS == find_kdbg_address_instant(vmi, &kdbg_pa, &kernbase_pa, &kernbase_va)) {
         goto found;
