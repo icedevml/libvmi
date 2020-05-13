@@ -255,8 +255,11 @@ int main(int argc, char **argv)
     json_object* profile = vmi_get_kernel_json(vmi);
 
     if (VMI_FAILURE == vmi_get_struct_member_offset_from_json(vmi, profile, "_KPCR", "PrcbData", &offset_kpcr_prcb)) {
-        printf("Failed to find _KPCR->Prcb member offset\n");
-        goto done;
+        // PrcbData was renamed to Prcb in 64-bit Windows
+        if (VMI_FAILURE == vmi_get_struct_member_offset_from_json(vmi, profile, "_KPCR", "Prcb", &offset_kpcr_prcb)) {
+            printf("Failed to find _KPCR->Prcb member offset\n");
+            goto done;
+        }
     }
 
     if (VMI_FAILURE == vmi_get_struct_member_offset_from_json(vmi, profile, "_KPRCB", "CurrentThread", &offset_kprcb_currentthread)) {
