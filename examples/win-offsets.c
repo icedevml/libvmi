@@ -92,8 +92,7 @@ event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
     addr_t kthread;
     addr_t eprocess;
 
-    access_context_t ctx =
-    {
+    access_context_t ctx = {
         .translate_mechanism = VMI_TM_PROCESS_DTB,
         .dtb = event->reg_event.value
     };
