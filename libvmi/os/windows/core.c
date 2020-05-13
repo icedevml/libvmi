@@ -836,7 +836,6 @@ init_from_json_profile_real(vmi_instance_t vmi, reg_t kpcr_register_to_use)
 
     if (kpcr_register_to_use) {
         reg_t kpcr_reg = 0;
-
         dbprint(VMI_DEBUG_MISC, "** Trying kpcr_register_to_use to get KPCR.\n");
         if (VMI_FAILURE == driver_get_vcpureg(vmi, &kpcr_reg, kpcr_register_to_use, 0)) {
             dbprint(VMI_DEBUG_MISC, "** driver_get_vcpureg(..) failed.\n");
@@ -846,7 +845,7 @@ init_from_json_profile_real(vmi_instance_t vmi, reg_t kpcr_register_to_use)
         if ( VMI_SUCCESS == kpcr_find1(vmi, windows, kpcr_reg) ) {}
         else if ( VMI_SUCCESS == kpcr_find2(vmi, windows) ) {}
         else if ( VMI_SUCCESS == kpcr_find3(vmi, windows) ) {}
-        //else if ( VMI_SUCCESS == kpcr_find4(vmi, windows, kpcr_reg) ) {}
+        else if ( VMI_SUCCESS == kpcr_find4(vmi, windows, kpcr_reg) ) {}
         else goto done;
 
         if ( VMI_FAILURE == vmi_translate_kv2p(vmi, windows->ntoskrnl_va, &windows->ntoskrnl) || !windows->ntoskrnl ) {
