@@ -39,6 +39,7 @@
 #include <inttypes.h>
 #include <glib.h>
 #include <signal.h>
+#include <unistd.h>
 
 vmi_instance_t vmi;
 GHashTable* config;
@@ -50,6 +51,19 @@ addr_t offset_kpcr_prcb;
 addr_t offset_kprcb_currentthread;
 addr_t offset_eprocess_uniqueprocessid;
 addr_t offset_kthread_process;
+
+int enable_debug = 0;
+
+void dp(const char* format, ...)
+{
+    va_list argptr;
+    va_start(argptr, format);
+
+    if (enable_debug)
+        vfprintf(stderr, format, argptr);
+
+    va_end(argptr);
+}
 
 void clean_up(void)
 {
@@ -89,7 +103,7 @@ event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
      * This may fail (most probably) if we are in user-mode DTB with KPTI hardening.
      */
     if (VMI_FAILURE == vmi_get_vcpureg(vmi, &gs_base, GS_BASE, 0)) {
-        printf("Failed to read GS_BASE\n");
+        dp("Failed to read GS_BASE\n");
         return VMI_EVENT_RESPONSE_NONE;
     }
 
@@ -102,7 +116,7 @@ event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
 
     ctx.addr = cur_thread;
     if (VMI_FAILURE == vmi_read_addr(vmi, &ctx, &kthread)) {
-        printf("Failed to get current KTHREAD from GS_BASE\n");
+        dp("Failed to get current KTHREAD from GS_BASE\n");
         return VMI_EVENT_RESPONSE_NONE;
     }
 
@@ -113,7 +127,7 @@ event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
 
     ctx.addr = pkprocess;
     if (VMI_FAILURE == vmi_read_addr(vmi, &ctx, &eprocess)) {
-        printf("Failed to get EPROCESS from KTHREAD\n");
+        dp("Failed to get EPROCESS from KTHREAD\n");
         return VMI_EVENT_RESPONSE_NONE;
     }
 
@@ -124,7 +138,7 @@ event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
 
     ctx.addr = pid_ptr;
     if (VMI_FAILURE == vmi_read_addr(vmi, &ctx, &pid)) {
-        printf("Failed to get PID from EPROCESS\n");
+        dp("Failed to get PID from EPROCESS\n");
         return VMI_EVENT_RESPONSE_NONE;
     }
 
@@ -135,11 +149,11 @@ event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
      * due to KPTI.
      */
     if (pid != 4) {
-        printf("Current PID=%llx, skip until we reach PID=4\n", (unsigned long long)pid);
+        dp("Current PID=%llx, skip until we reach PID=4\n", (unsigned long long)pid);
         return VMI_EVENT_RESPONSE_NONE;
     }
 
-    printf("Stopped inside system process\n");
+    dp("Stopped inside system process\n");
     find_pid4_success = 1;
 
     /*
@@ -152,39 +166,59 @@ event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
     return VMI_EVENT_RESPONSE_NONE;
 }
 
+void show_usage(char *arg0)
+{
+    printf("Usage: %s name|domid <domain name|domain id> -r <rekall profile> [-v]\n", arg0);
+    printf("    [-v]   optional, enable verbose mode\n");
+}
+
 int main(int argc, char **argv)
 {
     vmi_mode_t mode;
     int rc = 1;
 
-    /* this is the VM that we are looking at */
-    if (argc != 5) {
-        printf("Usage: %s name|domid <domain name|domain id> -r <rekall profile>\n", argv[0]);
-        return 1;
-    }   // if
-
     void *domain;
     uint64_t domid = VMI_INVALID_DOMID;
     uint64_t init_flags = 0;
 
-    if (strcmp(argv[1],"name")==0) {
-        domain = (void*)argv[2];
+    char *rekall_profile = NULL;
+    char c;
+
+    while ((c = getopt (argc, argv, "vr:")) != -1)
+      switch (c) {
+	case 'v':
+          enable_debug = 1;
+	  break;
+        case 'r':
+	  rekall_profile = optarg;
+	  break;
+	default:
+	  printf("xxx\n");
+	  show_usage(argv[0]);
+	  return 1;
+      }
+
+    if (argc - optind != 2) {
+        show_usage(argv[0]);
+	return 1;
+    }
+
+    if (strcmp(argv[optind],"name")==0) {
+        domain = (void*)argv[optind+1];
         init_flags |= VMI_INIT_DOMAINNAME;
-    } else if (strcmp(argv[1],"domid")==0) {
-        domid = strtoull(argv[2], NULL, 0);
+    } else if (strcmp(argv[optind],"domid")==0) {
+        domid = strtoull(argv[optind+1], NULL, 0);
         domain = (void*)&domid;
         init_flags |= VMI_INIT_DOMAINID;
     } else {
         printf("You have to specify either name or domid!\n");
+	show_usage(argv[0]);
         return 1;
     }
 
-    char *rekall_profile = NULL;
-
-    if (strcmp(argv[3], "-r") == 0) {
-        rekall_profile = argv[4];
-    } else {
+    if (!rekall_profile) {
         printf("You have to specify path to rekall profile!\n");
+	show_usage(argv[0]);
         return 1;
     }
 
@@ -213,6 +247,8 @@ int main(int argc, char **argv)
         printf("Failed to init LibVMI library.\n");
         goto done;
     }
+
+    g_hash_table_remove(config, "rekall_profile");
 
     json_object* profile = vmi_get_kernel_json(vmi);
 
