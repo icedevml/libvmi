@@ -42,35 +42,14 @@
 #include <unistd.h>
 
 vmi_instance_t vmi;
-GHashTable* config;
 vmi_event_t cr3_event;
 
-int find_pid4_success = 0;
-
-addr_t offset_kpcr_prcb;
-addr_t offset_kprcb_currentthread;
-addr_t offset_eprocess_uniqueprocessid;
-addr_t offset_kthread_process;
-
-int enable_debug = 0;
-
-void dp(const char* format, ...)
-{
-    va_list argptr;
-    va_start(argptr, format);
-
-    if (enable_debug)
-        vfprintf(stderr, format, argptr);
-
-    va_end(argptr);
-}
+int borks = 0;
 
 void clean_up(void)
 {
     vmi_resume_vm(vmi);
     vmi_destroy(vmi);
-    if (config)
-        g_hash_table_destroy(config);
 }
 
 void sigint_handler()
@@ -81,101 +60,15 @@ void sigint_handler()
 
 event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
 {
+    printf("borks %d\n", event->vcpu_id);
+    borks = 1;
     vmi_pause_vm(vmi);
-
-    if (event->vcpu_id != 0) {
-        /* LibVMI initialization procedure strongly
-         * relies on reading CPU context for VCPU 0
-         * so we only do care about this one. */
-        goto failed;
-    }
-
-    addr_t gs_base;
-    addr_t kthread;
-    addr_t eprocess;
-
-    access_context_t ctx = {
-        .translate_mechanism = VMI_TM_PROCESS_DTB,
-        .dtb = event->reg_event.value
-    };
-
-    /*
-     * Get current GS_BASE and translate its VA to PA using current CR3.
-     * This may fail (most probably) if we are in user-mode DTB with KPTI hardening.
-     */
-    page_mode_t pm = vmi_get_page_mode(vmi, 0);
-    reg_t kpcr_reg = pm == VMI_PM_IA32E ? GS_BASE : FS_BASE;
-
-    if (VMI_FAILURE == vmi_get_vcpureg(vmi, &gs_base, kpcr_reg, 0)) {
-        dp("Failed to read GS_BASE\n");
-	goto failed;
-    }
-
-    /*
-     * Inspect _KPCR to find _KTHREAD of currently running thread.
-     */
-    addr_t prcb = gs_base + offset_kpcr_prcb;
-    addr_t cur_thread = prcb + offset_kprcb_currentthread;
-    addr_t pid;
-
-    ctx.addr = cur_thread;
-    if (VMI_FAILURE == vmi_read_addr(vmi, &ctx, &kthread)) {
-        dp("Failed to get current KTHREAD from GS_BASE\n");
-	goto failed;
-    }
-
-    /*
-     * Find _EPROCESS of currently running thread.
-     */
-    addr_t pkprocess = kthread + offset_kthread_process;
-
-    ctx.addr = pkprocess;
-    if (VMI_FAILURE == vmi_read_addr(vmi, &ctx, &eprocess)) {
-        dp("Failed to get EPROCESS from KTHREAD\n");
-	goto failed;
-    }
-
-    /*
-     * Find PID of currently running process.
-     */
-    addr_t pid_ptr = eprocess + offset_eprocess_uniqueprocessid;
-
-    ctx.addr = pid_ptr;
-    if (VMI_FAILURE == vmi_read_addr(vmi, &ctx, &pid)) {
-        dp("Failed to get PID from EPROCESS\n");
-	goto failed;
-    }
-
-    /*
-     * Check if we've caught System process. This would ensure that
-     * current DTB for VCPU=0 contains all necessary kernel mappings.
-     * These mappings may not be present or be incomplete in other processes
-     * due to KPTI.
-     */
-    if (pid != 4) {
-        dp("Current PID=%llx, skip until we reach PID=4\n", (unsigned long long)pid);
-	goto failed;
-    }
-
-    dp("Stopped inside system process\n");
-    find_pid4_success = 1;
-
-    /*
-     * Remove CR3 event and leave the VM paused inside System process,
-     * to make it easy for LibVMI to detect all necessary offsets.
-     */
-    //vmi_clear_event(vmi, event, NULL);
-    return VMI_EVENT_RESPONSE_NONE;
-
-failed:
-    vmi_resume_vm(vmi);
     return VMI_EVENT_RESPONSE_NONE;
 }
 
 void show_usage(char *arg0)
 {
-    printf("Usage: %s name|domid <domain name|domain id> -r <rekall profile> [-v]\n", arg0);
-    printf("    [-v]   optional, enable verbose mode\n");
+    printf("Usage: %s name|domid <domain name|domain id>\n", arg0);
 }
 
 int main(int argc, char **argv)
@@ -190,14 +83,8 @@ int main(int argc, char **argv)
     char *rekall_profile = NULL;
     char c;
 
-    while ((c = getopt (argc, argv, "vr:")) != -1)
+    while ((c = getopt (argc, argv, "")) != -1)
       switch (c) {
-	case 'v':
-          enable_debug = 1;
-	  break;
-        case 'r':
-	  rekall_profile = optarg;
-	  break;
 	default:
 	  printf("xxx\n");
 	  show_usage(argv[0]);
@@ -222,12 +109,6 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    if (!rekall_profile) {
-        printf("You have to specify path to rekall profile!\n");
-	show_usage(argv[0]);
-        return 1;
-    }
-
     if (VMI_FAILURE == vmi_get_access_mode(vmi, domain, init_flags, NULL, &mode) )
         return 1;
 
@@ -238,48 +119,6 @@ int main(int argc, char **argv)
     }
 
     signal(SIGINT, sigint_handler);
-
-    config = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
-    if (!config) {
-        printf("Failed to create GHashTable!\n");
-        goto done;
-    }
-
-    g_hash_table_insert(config, g_strdup("os_type"), g_strdup("Windows"));
-    g_hash_table_insert(config, g_strdup("rekall_profile"), g_strdup(rekall_profile));
-
-    os_t os = vmi_init_os_partial(vmi, VMI_CONFIG_GHASHTABLE, config, NULL, false);
-    if (VMI_OS_WINDOWS != os) {
-        printf("Failed to init LibVMI library.\n");
-        goto done;
-    }
-
-    g_hash_table_remove(config, "rekall_profile");
-
-    json_object* profile = vmi_get_kernel_json(vmi);
-
-    if (VMI_FAILURE == vmi_get_struct_member_offset_from_json(vmi, profile, "_KPCR", "PrcbData", &offset_kpcr_prcb)) {
-        // PrcbData was renamed to Prcb in 64-bit Windows
-        if (VMI_FAILURE == vmi_get_struct_member_offset_from_json(vmi, profile, "_KPCR", "Prcb", &offset_kpcr_prcb)) {
-            printf("Failed to find _KPCR->Prcb member offset\n");
-            goto done;
-        }
-    }
-
-    if (VMI_FAILURE == vmi_get_struct_member_offset_from_json(vmi, profile, "_KPRCB", "CurrentThread", &offset_kprcb_currentthread)) {
-        printf("Failed to find _KPRCB->CurrentThread member offset\n");
-        goto done;
-    }
-
-    if (VMI_FAILURE == vmi_get_struct_member_offset_from_json(vmi, profile, "_EPROCESS", "UniqueProcessId", &offset_eprocess_uniqueprocessid)) {
-        printf("Failed to find _EPROCESS->UniqueProcessId member offset\n");
-        goto done;
-    }
-
-    if (VMI_FAILURE == vmi_get_struct_member_offset_from_json(vmi, profile, "_KTHREAD", "Process", &offset_kthread_process)) {
-        printf("Failed to find _KTHREAD->Process member offset\n");
-        goto done;
-    }
 
     memset(&cr3_event, 0, sizeof(vmi_event_t));
     cr3_event.version = VMI_EVENTS_VERSION;
@@ -293,9 +132,7 @@ int main(int argc, char **argv)
         goto done;
     }
 
-    int iter = 0;
-
-    while (!find_pid4_success) {
+    while (!borks) {
         if (VMI_FAILURE == vmi_events_listen(vmi, 500)) {
             printf("Failed to listen to VMI events\n");
             goto done;
@@ -306,88 +143,6 @@ int main(int argc, char **argv)
         vmi_events_listen(vmi, 0);
 
     vmi_clear_event(vmi, &cr3_event, NULL);
-
-    // the vm is already paused if we've got here
-    os = vmi_init_os(vmi, VMI_CONFIG_GHASHTABLE, config, NULL);
-    if (VMI_OS_WINDOWS != os) {
-        printf("Failed to init LibVMI library.\n");
-        goto done;
-    }
-
-    /* Get internal fields */
-    addr_t ntoskrnl = 0;
-    addr_t ntoskrnl_va = 0;
-    addr_t tasks = 0;
-    addr_t pdbase = 0;
-    addr_t pid = 0;
-    addr_t pname = 0;
-    addr_t kdvb = 0;
-    addr_t sysproc = 0;
-    addr_t kpcr = 0;
-    addr_t kdbg = 0;
-    addr_t kpgd = 0;
-
-    if (VMI_FAILURE == vmi_get_offset(vmi, "win_ntoskrnl", &ntoskrnl))
-        printf("Failed to read field \"ntoskrnl\"\n");
-
-    if (VMI_FAILURE == vmi_get_offset(vmi, "win_ntoskrnl_va", &ntoskrnl_va))
-        printf("Failed to read field \"ntoskrnl_va\"\n");
-
-    if (VMI_FAILURE == vmi_get_offset(vmi, "win_tasks", &tasks))
-        printf("Failed to read field \"tasks\"\n");
-
-    if (VMI_FAILURE == vmi_get_offset(vmi, "win_pdbase", &pdbase))
-        printf("Failed to read field \"pdbase\"\n");
-
-    if (VMI_FAILURE == vmi_get_offset(vmi, "win_pid", &pid))
-        printf("Failed to read field \"pid\"\n");
-
-    if (VMI_FAILURE == vmi_get_offset(vmi, "win_pname", &pname))
-        printf("Failed to read field \"pname\"\n");
-
-    if (VMI_FAILURE == vmi_get_offset(vmi, "win_kdvb", &kdvb))
-        printf("Failed to read field \"kdvb\"\n");
-
-    if (VMI_FAILURE == vmi_get_offset(vmi, "win_sysproc", &sysproc))
-        printf("Failed to read field \"sysproc\"\n");
-
-    if (VMI_FAILURE == vmi_get_offset(vmi, "win_kpcr", &kpcr))
-        printf("Failed to read field \"kpcr\"\n");
-
-    if (VMI_FAILURE == vmi_get_offset(vmi, "win_kdbg", &kdbg))
-        printf("Failed to read field \"kdbg\"\n");
-
-    if (VMI_FAILURE == vmi_get_offset(vmi, "kpgd", &kpgd))
-        printf("Failed to read field \"kpgd\"\n");
-
-    printf("win_ntoskrnl:0x%lx\n"
-           "win_ntoskrnl_va:0x%lx\n"
-           "win_tasks:0x%lx\n"
-           "win_pdbase:0x%lx\n"
-           "win_pid:0x%lx\n"
-           "win_pname:0x%lx\n"
-           "win_kdvb:0x%lx\n"
-           "win_sysproc:0x%lx\n"
-           "win_kpcr:0x%lx\n"
-           "win_kdbg:0x%lx\n"
-           "kpgd:0x%lx\n",
-           ntoskrnl,
-           ntoskrnl_va,
-           tasks,
-           pdbase,
-           pid,
-           pname,
-           kdvb,
-           sysproc,
-           kpcr,
-           kdbg,
-           kpgd);
-
-    if (!ntoskrnl || !ntoskrnl_va || !sysproc || !pdbase || !kpgd) {
-        printf("Failed to get most essential fields\n");
-        goto done;
-    }
-
     rc = 0;
 
     /* cleanup any memory associated with the LibVMI instance */
