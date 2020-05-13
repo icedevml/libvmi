@@ -101,7 +101,10 @@ event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
      * Get current GS_BASE and translate its VA to PA using current CR3.
      * This may fail (most probably) if we are in user-mode DTB with KPTI hardening.
      */
-    if (VMI_FAILURE == vmi_get_vcpureg(vmi, &gs_base, GS_BASE, 0)) {
+    page_mode_t pm = vmi_get_page_mode(vmi, 0);
+    reg_t kpcr_reg = pm == VMI_PM_IA32E ? GS_BASE : FS_BASE;
+
+    if (VMI_FAILURE == vmi_get_vcpureg(vmi, &gs_base, kpcr_reg, 0)) {
         dp("Failed to read GS_BASE\n");
         return VMI_EVENT_RESPONSE_NONE;
     }
@@ -251,7 +254,7 @@ int main(int argc, char **argv)
 
     json_object* profile = vmi_get_kernel_json(vmi);
 
-    if (VMI_FAILURE == vmi_get_struct_member_offset_from_json(vmi, profile, "_KPCR", "Prcb", &offset_kpcr_prcb)) {
+    if (VMI_FAILURE == vmi_get_struct_member_offset_from_json(vmi, profile, "_KPCR", "PrcbData", &offset_kpcr_prcb)) {
         printf("Failed to find _KPCR->Prcb member offset\n");
         goto done;
     }
