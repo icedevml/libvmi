@@ -848,6 +848,34 @@ os_t vmi_init_os(
     vmi_init_error_t *error) NOEXCEPT;
 
 /**
+ * Initialize the OS specific functionality of LibVMI.
+ * See description for vmi_init_os() for more details.
+ *
+ * This function can be used with os_specific_init=FALSE in order to initialize
+ * only the Rekall profile and paging, if you don't want LibVMI to find kernel
+ * offsets automatically.
+ *
+ * @param[in] vmi LibVMI instance
+ * @param[in] config_mode The type of OS configuration that was provided.
+ * @param[in] config Configuration is passed directly to LibVMI (i.e. in a string
+ *                   or in a GHashTable) or NULL if global config file is used.
+ * @param[out] error Optional. If not NULL and the function returns VMI_OS_UNKNOWN,
+ *                   this will specify the stage at which initialization failed.
+ * @param[in] os_specific_init If set to FALSE - only initialize the JSON profile
+ *                             and paging, but don't perform OS-specific offset
+ *                             initialization.
+ * @return VMI_OS_UNKNOWN when the configuration didn't work for the VM, otherwise
+ *         the OS type that has been initialized (ie. VMI_OS_WINDOWS or
+ *         VMI_OS_LINUX).
+ */
+os_t vmi_init_os_partial(
+    vmi_instance_t vmi,
+    vmi_config_t config_mode,
+    void *config,
+    vmi_init_error_t *error,
+    bool os_specific_init) NOEXCEPT;
+
+/**
  * Destroys an instance by freeing memory and closing any open handles.
  *
  * @param[in] vmi Instance to destroy

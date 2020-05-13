@@ -22,8 +22,14 @@
 
 #define _GNU_SOURCE
 
+#define LIBVMI_EXTRA_JSON
+
 #include <libvmi/libvmi.h>
 #include <libvmi/peparse.h>
+#include <libvmi/events.h>
+#include <libvmi/libvmi_extra.h>
+#include <json-c/json.h>
+
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
@@ -36,6 +42,14 @@
 
 vmi_instance_t vmi;
 GHashTable* config;
+vmi_event_t cr3_event;
+
+int find_pid4_success = 0;
+
+addr_t offset_kpcr_prcb;
+addr_t offset_kprcb_currentthread;
+addr_t offset_eprocess_uniqueprocessid;
+addr_t offset_kthread_process;
 
 void clean_up(void)
 {
@@ -49,6 +63,93 @@ void sigint_handler()
 {
     clean_up();
     exit(1);
+}
+
+event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
+{
+    if (event->vcpu_id != 0) {
+        /* LibVMI initialization procedure strongly
+         * relies on reading CPU context for VCPU 0
+         * so we only do care about this one. */
+        return VMI_EVENT_RESPONSE_NONE;
+    }
+
+    addr_t gs_base;
+    addr_t kthread;
+    addr_t eprocess;
+
+    access_context_t ctx =
+    {
+        .translate_mechanism = VMI_TM_PROCESS_DTB,
+        .dtb = event->reg_event.value
+    };
+
+    /*
+     * Get current GS_BASE and translate its VA to PA using current CR3.
+     * This may fail (most probably) if we are in user-mode DTB with KPTI hardening.
+     */
+    if (VMI_FAILURE == vmi_get_vcpureg(vmi, &gs_base, GS_BASE, 0)) {
+        printf("Failed to read GS_BASE\n");
+        return VMI_EVENT_RESPONSE_NONE;
+    }
+
+    /*
+     * Inspect _KPCR to find _KTHREAD of currently running thread.
+     */
+    addr_t prcb = gs_base + offset_kpcr_prcb;
+    addr_t cur_thread = prcb + offset_kprcb_currentthread;
+    addr_t pid;
+
+    ctx.addr = cur_thread;
+    if (VMI_FAILURE == vmi_read_addr(vmi, &ctx, &kthread)) {
+        printf("Failed to get current KTHREAD from GS_BASE\n");
+        return VMI_EVENT_RESPONSE_NONE;
+    }
+
+    /*
+     * Find _EPROCESS of currently running thread.
+     */
+    addr_t pkprocess = kthread + offset_kthread_process;
+
+    ctx.addr = pkprocess;
+    if (VMI_FAILURE == vmi_read_addr(vmi, &ctx, &eprocess)) {
+        printf("Failed to get EPROCESS from KTHREAD\n");
+        return VMI_EVENT_RESPONSE_NONE;
+    }
+
+    /*
+     * Find PID of currently running process.
+     */
+    addr_t pid_ptr = eprocess + offset_eprocess_uniqueprocessid;
+
+    ctx.addr = pid_ptr;
+    if (VMI_FAILURE == vmi_read_addr(vmi, &ctx, &pid)) {
+        printf("Failed to get PID from EPROCESS\n");
+        return VMI_EVENT_RESPONSE_NONE;
+    }
+
+    /*
+     * Check if we've caught System process. This would ensure that
+     * current DTB for VCPU=0 contains all necessary kernel mappings.
+     * These mappings may not be present or be incomplete in other processes
+     * due to KPTI.
+     */
+    if (pid != 4) {
+        printf("Current PID=%llx, skip until we reach PID=4\n", (unsigned long long)pid);
+        return VMI_EVENT_RESPONSE_NONE;
+    }
+
+    printf("Stopped inside system process\n");
+    find_pid4_success = 1;
+
+    /*
+     * Remove CR3 event and leave the VM paused inside System process,
+     * to make it easy for LibVMI to detect all necessary offsets.
+     */
+    vmi_clear_event(vmi, event, NULL);
+    vmi_pause_vm(vmi);
+
+    return VMI_EVENT_RESPONSE_NONE;
 }
 
 int main(int argc, char **argv)
@@ -91,16 +192,10 @@ int main(int argc, char **argv)
         return 1;
 
     /* initialize the libvmi library */
-    if (VMI_FAILURE == vmi_init(&vmi, mode, domain, init_flags, NULL, NULL)) {
+    if (VMI_FAILURE == vmi_init(&vmi, mode, domain, init_flags | VMI_INIT_EVENTS, NULL, NULL)) {
         printf("Failed to init LibVMI library.\n");
         return 1;
     }
-
-    /* pause the vm for consistent memory access */
-    if (vmi_pause_vm(vmi) != VMI_SUCCESS) {
-        printf("Failed to pause VM\n");
-        goto done;
-    } // if
 
     signal(SIGINT, sigint_handler);
 
@@ -113,12 +208,55 @@ int main(int argc, char **argv)
     g_hash_table_insert(config, g_strdup("os_type"), g_strdup("Windows"));
     g_hash_table_insert(config, g_strdup("rekall_profile"), g_strdup(rekall_profile));
 
-    if (VMI_PM_UNKNOWN == vmi_init_paging(vmi, VMI_PM_INITFLAG_TRANSITION_PAGES) ) {
-        printf("Failed to init LibVMI paging.\n");
+    os_t os = vmi_init_os_partial(vmi, VMI_CONFIG_GHASHTABLE, config, NULL, false);
+    if (VMI_OS_WINDOWS != os) {
+        printf("Failed to init LibVMI library.\n");
         goto done;
     }
 
-    os_t os = vmi_init_os(vmi, VMI_CONFIG_GHASHTABLE, config, NULL);
+    json_object* profile = vmi_get_kernel_json(vmi);
+
+    if (VMI_FAILURE == vmi_get_struct_member_offset_from_json(vmi, profile, "_KPCR", "Prcb", &offset_kpcr_prcb)) {
+        printf("Failed to find _KPCR->Prcb member offset\n");
+        goto done;
+    }
+
+    if (VMI_FAILURE == vmi_get_struct_member_offset_from_json(vmi, profile, "_KPRCB", "CurrentThread", &offset_kprcb_currentthread)) {
+        printf("Failed to find _KPRCB->CurrentThread member offset\n");
+        goto done;
+    }
+
+    if (VMI_FAILURE == vmi_get_struct_member_offset_from_json(vmi, profile, "_EPROCESS", "UniqueProcessId", &offset_eprocess_uniqueprocessid)) {
+        printf("Failed to find _EPROCESS->UniqueProcessId member offset\n");
+        goto done;
+    }
+
+    if (VMI_FAILURE == vmi_get_struct_member_offset_from_json(vmi, profile, "_KTHREAD", "Process", &offset_kthread_process)) {
+        printf("Failed to find _KTHREAD->Process member offset\n");
+        goto done;
+    }
+
+    memset(&cr3_event, 0, sizeof(vmi_event_t));
+    cr3_event.version = VMI_EVENTS_VERSION;
+    cr3_event.type = VMI_EVENT_REGISTER;
+    cr3_event.reg_event.reg = CR3;
+    cr3_event.reg_event.in_access = VMI_REGACCESS_W;
+    cr3_event.callback = cr3_cb;
+
+    if (VMI_FAILURE == vmi_register_event(vmi, &cr3_event)) {
+        printf("Failed to register CR3 write event\n");
+        goto done;
+    }
+
+    while (!find_pid4_success) {
+        if (VMI_FAILURE == vmi_events_listen(vmi, 500)) {
+            printf("Failed to listen to VMI events\n");
+            goto done;
+        }
+    }
+
+    // the vm is already paused if we've got here
+    os = vmi_init_os(vmi, VMI_CONFIG_GHASHTABLE, config, NULL);
     if (VMI_OS_WINDOWS != os) {
         printf("Failed to init LibVMI library.\n");
         goto done;

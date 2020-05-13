@@ -655,6 +655,16 @@ os_t vmi_init_os(
     void *config,
     vmi_init_error_t *error)
 {
+    return vmi_init_os_partial(vmi, config_mode, config, error, true);
+}
+
+os_t vmi_init_os_partial(
+    vmi_instance_t vmi,
+    vmi_config_t config_mode,
+    void *config,
+    vmi_init_error_t *error,
+    bool os_specific_init)
+{
     if (!vmi)
         return VMI_OS_UNKNOWN;
 
@@ -721,6 +731,13 @@ os_t vmi_init_os(
 
         goto error_exit;
     }
+
+    /*
+     * Skip OS specific kernel offset initialization if
+     * somebody requested just for paging and JSON profile.
+     */
+    if (!os_specific_init)
+        goto error_exit;
 
     /* setup OS specific stuff */
     switch ( vmi->os_type ) {
