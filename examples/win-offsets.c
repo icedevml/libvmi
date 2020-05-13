@@ -88,17 +88,60 @@ event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
 	return VMI_EVENT_RESPONSE_NONE;
     }
 
-    if (VMI_FAILURE == vmi_pagetable_lookup(vmi, event->reg_event.value, gs_base + 0x40, &phys_gs)) {
-        printf("failed to make V2P translation of GS_BASE=%llx with CR3=%llx\n", gs_base, event->reg_event.value);
-	//borks = 1;
-	//vmi_pause_vm(vmi);
+    addr_t prcb = gs_base + 384; // KPCR_PRCB
+    addr_t cur_thread = prcb + 8; // CurrentThread
+
+    if (VMI_FAILURE == vmi_pagetable_lookup(vmi, event->reg_event.value, cur_thread, &phys_gs)) {
+        printf("failed to make V2P translation\n");
 	return VMI_EVENT_RESPONSE_NONE;
     }
+
+    uint64_t val;
+
+    if (VMI_FAILURE == vmi_read_64_pa(vmi, phys_gs, &val)) {
+        printf("xd\n");
+	return VMI_EVENT_RESPONSE_NONE;
+    }
+
+    addr_t pkprocess = val + 544;
+
+    if (VMI_FAILURE == vmi_pagetable_lookup(vmi, event->reg_event.value, pkprocess, &phys_gs)) {
+        printf("fa22iled to make V2P translation\n");
+	return VMI_EVENT_RESPONSE_NONE;
+    }
+
+    uint64_t val2;
+
+    if (VMI_FAILURE == vmi_read_64_pa(vmi, phys_gs, &val2)) {
+        printf("xd2\n");
+	return VMI_EVENT_RESPONSE_NONE;
+    }
+
+    addr_t upid = val2 + 744;
+
+    if (VMI_FAILURE == vmi_pagetable_lookup(vmi, event->reg_event.value, upid, &phys_gs)) {
+        printf("fa22iled to make V2P translati213213on\n");
+	return VMI_EVENT_RESPONSE_NONE;
+    }
+
+    uint64_t val3;
+
+    if (VMI_FAILURE == vmi_read_64_pa(vmi, phys_gs, &val3)) {
+        printf("xd3\n");
+	return VMI_EVENT_RESPONSE_NONE;
+    }
+
+    if (val3 != 4) {
+	    printf("non pid4, ignore\n");
+        return VMI_EVENT_RESPONSE_NONE;
+    }
+
+    printf("process=%llx upid=%llx pid=%llx cr3=%llx\n", val2, upid, val3, event->reg_event.value);
 
     /*
      * Check if we can dereference GS:[0] pointer using current DTB.
      */
-    uint64_t val;
+    /* uint64_t val;
     if (VMI_FAILURE == vmi_read_64_pa(vmi, phys_gs, &val)) {
         printf("failed to read physical memory under GS_BASE\n");
 	return VMI_EVENT_RESPONSE_NONE;
@@ -114,13 +157,13 @@ event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
     if (VMI_FAILURE == vmi_read_64_pa(vmi, val2, &val3)) {
         printf("failed to read PID\n");
 	return VMI_EVENT_RESPONSE_NONE;
-    }
+    } */
 
-    printf("val: cr3=%llx gs_base=%llx gs_ptr=%llx gs_pa=%llx gs_ptr_pa=%llx pid=%llx\n", event->reg_event.value, gs_base, val, phys_gs, val2, val3);
-    //borks = 1;
+    //printf("val: cr3=%llx kernel_pa=%llx\n", event->reg_event.value, phys_gs);
+    borks = 1;
 
-    //vmi_clear_event(vmi, event, NULL);
-    //vmi_pause_vm(vmi);
+    vmi_clear_event(vmi, event, NULL);
+    vmi_pause_vm(vmi);
 
     return VMI_EVENT_RESPONSE_NONE;
 }
@@ -211,6 +254,8 @@ int main(int argc, char **argv)
         printf("failed to register event for cr3\n");
     }
 
+    printf("start\n");
+
     int failed = 0;
     while(!failed && !borks) {
         if (VMI_FAILURE == vmi_events_listen(vmi, 500)) {
@@ -220,7 +265,7 @@ int main(int argc, char **argv)
     }
 
     printf("borks\n");
- 
+
     // the vm is already paused if we've got here
 
     os_t os = vmi_init_os(vmi, VMI_CONFIG_GHASHTABLE, config, NULL);
