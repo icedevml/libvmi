@@ -22,9 +22,13 @@
 
 #define _GNU_SOURCE
 
+#define LIBVMI_EXTRA_JSON
+
 #include <libvmi/libvmi.h>
 #include <libvmi/peparse.h>
 #include <libvmi/events.h>
+#include <libvmi/libvmi_extra.h>
+#include <json-c/json.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -36,19 +40,9 @@
 #include <glib.h>
 #include <signal.h>
 
-reg_t sysenter_ip = 0;
 vmi_instance_t vmi;
 GHashTable* config;
 vmi_event_t cr3_event;
-vmi_event_t msr_syscall_sysenter_event;
-
-vmi_event_t msr_event;
-
-event_response_t msr_write_cb(vmi_instance_t vmi, vmi_event_t *event)
-{
-    printf("MSR write happened: MSR=%x Value=%lx\n", event->reg_event.msr, event->reg_event.value);
-    return 0;
-}
 
 void clean_up(void)
 {
@@ -64,7 +58,12 @@ void sigint_handler()
     exit(1);
 }
 
-int borks = 0;
+int find_pid4_success = 0;
+
+addr_t offset_kpcr_prcb;
+addr_t offset_kprcb_currentthread;
+addr_t offset_eprocess_uniqueprocessid;
+addr_t offset_kthread_process;
 
 event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
 {
@@ -80,16 +79,15 @@ event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
 
     /*
      * Get current GS_BASE and translate its VA to PA using current CR3.
-     * This may fail if our current DTB is a user-mode version with
-     * KPTI hardening.
+     * This may fail probably if we are in user-mode DTB with KPTI hardening.
      */
     if (VMI_FAILURE == vmi_get_vcpureg(vmi, &gs_base, GS_BASE, 0)) {
         printf("failed to get GS_BASE cpureg\n");
 	return VMI_EVENT_RESPONSE_NONE;
     }
 
-    addr_t prcb = gs_base + 384; // KPCR_PRCB
-    addr_t cur_thread = prcb + 8; // CurrentThread
+    addr_t prcb = gs_base + offset_kpcr_prcb;
+    addr_t cur_thread = prcb + offset_kprcb_currentthread;
 
     if (VMI_FAILURE == vmi_pagetable_lookup(vmi, event->reg_event.value, cur_thread, &phys_gs)) {
         printf("failed to make V2P translation\n");
@@ -103,7 +101,7 @@ event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
 	return VMI_EVENT_RESPONSE_NONE;
     }
 
-    addr_t pkprocess = val + 544;
+    addr_t pkprocess = val + offset_kthread_process;
 
     if (VMI_FAILURE == vmi_pagetable_lookup(vmi, event->reg_event.value, pkprocess, &phys_gs)) {
         printf("fa22iled to make V2P translation\n");
@@ -117,7 +115,7 @@ event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
 	return VMI_EVENT_RESPONSE_NONE;
     }
 
-    addr_t upid = val2 + 744;
+    addr_t upid = val2 + offset_eprocess_uniqueprocessid;
 
     if (VMI_FAILURE == vmi_pagetable_lookup(vmi, event->reg_event.value, upid, &phys_gs)) {
         printf("fa22iled to make V2P translati213213on\n");
@@ -138,36 +136,14 @@ event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
 
     printf("process=%llx upid=%llx pid=%llx cr3=%llx\n", val2, upid, val3, event->reg_event.value);
 
-    /*
-     * Check if we can dereference GS:[0] pointer using current DTB.
-     */
-    /* uint64_t val;
-    if (VMI_FAILURE == vmi_read_64_pa(vmi, phys_gs, &val)) {
-        printf("failed to read physical memory under GS_BASE\n");
-	return VMI_EVENT_RESPONSE_NONE;
-    }
-
-    uint64_t val2;
-    if (VMI_FAILURE == vmi_pagetable_lookup(vmi, event->reg_event.value, val, &val2)) {
-        printf("failed to make V2P translation for GS:[0], val=%llx\n", val2);
-	return VMI_EVENT_RESPONSE_NONE;
-    }
-
-    uint64_t val3;
-    if (VMI_FAILURE == vmi_read_64_pa(vmi, val2, &val3)) {
-        printf("failed to read PID\n");
-	return VMI_EVENT_RESPONSE_NONE;
-    } */
-
-    //printf("val: cr3=%llx kernel_pa=%llx\n", event->reg_event.value, phys_gs);
-    borks = 1;
+    find_pid4_success = 1;
 
     vmi_clear_event(vmi, event, NULL);
     vmi_pause_vm(vmi);
 
     return VMI_EVENT_RESPONSE_NONE;
 }
-
+//
 int main(int argc, char **argv)
 {
     vmi_mode_t mode;
@@ -222,10 +198,35 @@ int main(int argc, char **argv)
     g_hash_table_insert(config, g_strdup("os_type"), g_strdup("Windows"));
     g_hash_table_insert(config, g_strdup("rekall_profile"), g_strdup(rekall_profile));
 
-    if (VMI_PM_UNKNOWN == vmi_init_paging(vmi, VMI_PM_INITFLAG_TRANSITION_PAGES) ) {
-        printf("Failed to init LibVMI paging.\n");
+    os_t os = vmi_init_os_partial(vmi, VMI_CONFIG_GHASHTABLE, config, NULL, false);
+    if (VMI_OS_WINDOWS != os) {
+        printf("Failed to init LibVMI library.\n");
         goto done;
     }
+
+    json_object* profile = vmi_get_kernel_json(vmi);
+
+    if (VMI_FAILURE == vmi_get_struct_member_offset_from_json(vmi, profile, "_KPCR", "Prcb", &offset_kpcr_prcb)) {
+        printf("failed 1\n");
+	return VMI_EVENT_RESPONSE_NONE;
+    }
+
+    if (VMI_FAILURE == vmi_get_struct_member_offset_from_json(vmi, profile, "_KPRCB", "CurrentThread", &offset_kprcb_currentthread)) {
+        printf("failed 2\n");
+	return VMI_EVENT_RESPONSE_NONE;
+    }
+
+    if (VMI_FAILURE == vmi_get_struct_member_offset_from_json(vmi, profile, "_EPROCESS", "UniqueProcessId", &offset_eprocess_uniqueprocessid)) {
+        printf("failed 3\n");
+	return VMI_EVENT_RESPONSE_NONE;
+    }
+
+    if (VMI_FAILURE == vmi_get_struct_member_offset_from_json(vmi, profile, "_KTHREAD", "Process", &offset_kthread_process)) {
+        printf("failed 4\n");
+	return VMI_EVENT_RESPONSE_NONE;
+    }
+
+    printf("booo %d %d %d %d\n", offset_kpcr_prcb, offset_kprcb_currentthread, offset_eprocess_uniqueprocessid, offset_kthread_process);
 
     memset(&cr3_event, 0, sizeof(vmi_event_t));
     cr3_event.version = VMI_EVENTS_VERSION;
@@ -234,41 +235,23 @@ int main(int argc, char **argv)
     cr3_event.reg_event.in_access = VMI_REGACCESS_W;
     cr3_event.callback = cr3_cb;
 
-    memset(&msr_event, 0, sizeof(vmi_event_t));
-    msr_event.version = VMI_EVENTS_VERSION;
-    msr_event.type = VMI_EVENT_REGISTER;
-    msr_event.reg_event.reg = MSR_ALL;
-    //msr_event.reg_event.msr = MSR_SHADOW_GS_BASE;
-    msr_event.reg_event.in_access = VMI_REGACCESS_W;
-    msr_event.callback = msr_write_cb;
-
     signal(SIGINT, sigint_handler);
-
-    /* if (VMI_FAILURE == vmi_register_event(vmi, &msr_event))
-    {
-        printf("omg\n");
-    } */
 
     if (VMI_FAILURE == vmi_register_event(vmi, &cr3_event))
     {
         printf("failed to register event for cr3\n");
     }
 
-    printf("start\n");
-
     int failed = 0;
-    while(!failed && !borks) {
+    while(!failed && !find_pid4_success) {
         if (VMI_FAILURE == vmi_events_listen(vmi, 500)) {
             printf("event listen failed\n");
 	    failed = true;
 	}
     }
 
-    printf("borks\n");
-
     // the vm is already paused if we've got here
-
-    os_t os = vmi_init_os(vmi, VMI_CONFIG_GHASHTABLE, config, NULL);
+    os = vmi_init_os(vmi, VMI_CONFIG_GHASHTABLE, config, NULL);
     if (VMI_OS_WINDOWS != os) {
         printf("Failed to init LibVMI library.\n");
         goto done;
