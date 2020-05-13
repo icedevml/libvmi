@@ -81,11 +81,13 @@ void sigint_handler()
 
 event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
 {
+    vmi_pause_vm(vmi);
+
     if (event->vcpu_id != 0) {
         /* LibVMI initialization procedure strongly
          * relies on reading CPU context for VCPU 0
          * so we only do care about this one. */
-        return VMI_EVENT_RESPONSE_NONE;
+        goto failed;
     }
 
     addr_t gs_base;
@@ -106,7 +108,7 @@ event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
 
     if (VMI_FAILURE == vmi_get_vcpureg(vmi, &gs_base, kpcr_reg, 0)) {
         dp("Failed to read GS_BASE\n");
-        return VMI_EVENT_RESPONSE_NONE;
+	goto failed;
     }
 
     /*
@@ -119,7 +121,7 @@ event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
     ctx.addr = cur_thread;
     if (VMI_FAILURE == vmi_read_addr(vmi, &ctx, &kthread)) {
         dp("Failed to get current KTHREAD from GS_BASE\n");
-        return VMI_EVENT_RESPONSE_NONE;
+	goto failed;
     }
 
     /*
@@ -130,7 +132,7 @@ event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
     ctx.addr = pkprocess;
     if (VMI_FAILURE == vmi_read_addr(vmi, &ctx, &eprocess)) {
         dp("Failed to get EPROCESS from KTHREAD\n");
-        return VMI_EVENT_RESPONSE_NONE;
+	goto failed;
     }
 
     /*
@@ -141,7 +143,7 @@ event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
     ctx.addr = pid_ptr;
     if (VMI_FAILURE == vmi_read_addr(vmi, &ctx, &pid)) {
         dp("Failed to get PID from EPROCESS\n");
-        return VMI_EVENT_RESPONSE_NONE;
+	goto failed;
     }
 
     /*
@@ -152,7 +154,7 @@ event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
      */
     if (pid != 4) {
         dp("Current PID=%llx, skip until we reach PID=4\n", (unsigned long long)pid);
-        return VMI_EVENT_RESPONSE_NONE;
+	goto failed;
     }
 
     dp("Stopped inside system process\n");
@@ -162,9 +164,11 @@ event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
      * Remove CR3 event and leave the VM paused inside System process,
      * to make it easy for LibVMI to detect all necessary offsets.
      */
-    vmi_clear_event(vmi, event, NULL);
-    vmi_pause_vm(vmi);
+    //vmi_clear_event(vmi, event, NULL);
+    return VMI_EVENT_RESPONSE_NONE;
 
+failed:
+    vmi_resume_vm(vmi);
     return VMI_EVENT_RESPONSE_NONE;
 }
 
@@ -289,12 +293,19 @@ int main(int argc, char **argv)
         goto done;
     }
 
+    int iter = 0;
+
     while (!find_pid4_success) {
         if (VMI_FAILURE == vmi_events_listen(vmi, 500)) {
             printf("Failed to listen to VMI events\n");
             goto done;
         }
     }
+
+    if ( vmi_are_events_pending(vmi) > 0 )
+        vmi_events_listen(vmi, 0);
+
+    vmi_clear_event(vmi, &cr3_event, NULL);
 
     // the vm is already paused if we've got here
     os = vmi_init_os(vmi, VMI_CONFIG_GHASHTABLE, config, NULL);
