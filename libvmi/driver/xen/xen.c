@@ -2743,3 +2743,24 @@ xen_set_access_required(
 
     return VMI_SUCCESS;
 }
+
+status_t
+xen_wait_vm(
+    vmi_instance_t vmi)
+{
+	xen_instance_t *xen = xen_get_instance(vmi);
+	xc_vcpuinfo_t info;
+	int iter = 0;
+
+	for (int i = 0; i < 2; i++) {
+		do {
+			iter++;
+			xen->libxcw.xc_vcpu_getinfo(xen->xchandle, xen->domainid, i, &info);
+		} while (!info.blocked && !info.running);
+	}
+
+	errprint("success afte %d iter\n", iter);
+
+    return VMI_SUCCESS;
+}
+

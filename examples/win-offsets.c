@@ -387,9 +387,7 @@ int main(int argc, char **argv)
     }
 
     vmi_resume_vm(vmi);
-
-//    while (vmi_are_events_pending(vmi) > 0);
-    //sleep(1);
+    vmi_wait_vm(vmi);
 
     rc = 0;
 
