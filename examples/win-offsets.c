@@ -67,7 +67,6 @@ void dp(const char* format, ...)
 
 void clean_up(void)
 {
-    //vmi_resume_vm(vmi);
     vmi_destroy(vmi);
     if (config)
         g_hash_table_destroy(config);
@@ -390,9 +389,6 @@ int main(int argc, char **argv)
 
     vmi_resume_vm(vmi);
 
-    /* for (int i = 0; i < 500; i++) {
-        vmi_events_listen(vmi, 0);
-    } */
     sleep(1);
 
     rc = 0;
