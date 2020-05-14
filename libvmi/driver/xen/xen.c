@@ -2742,3 +2742,38 @@ xen_set_access_required(
 
     return VMI_SUCCESS;
 }
+
+status_t
+xen_wait_vm(
+    vmi_instance_t vmi)
+{
+    int rc;
+    xen_instance_t *xen = xen_get_instance(vmi);
+
+    xc_dominfo_t dominfo;
+    xc_vcpuinfo_t info;
+
+    rc = xen->libxcw.xc_domain_getinfo(xen->xchandle, xen->domainid, 1, &dominfo);
+
+    if ( rc != 1 ) {
+        errprint("Failed to get domain info, rc=%d\n", rc);
+	return VMI_FAILURE;
+    }
+
+    int iter = 0;
+
+    for (int vcpu = 0; vcpu <= dominfo.max_vcpu_id; vcpu++) {
+        do {
+            iter++;
+            rc = xen->libxcw.xc_vcpu_getinfo(xen->xchandle, xen->domainid, vcpu, &info);
+
+	    if ( rc < 0 ) {
+                errprint("Failed to get vcpu info for vcpu=%d, rc=%d", vcpu, rc);
+	    }
+        } while (!info.blocked && !info.running && info.online);
+    }
+
+    errprint("success after %d iterations for total %d vCPUs\n", iter, dominfo.max_vcpu_id + 1);
+    return VMI_SUCCESS;
+}
+

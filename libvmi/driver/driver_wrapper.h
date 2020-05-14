@@ -409,6 +409,20 @@ driver_resume_vm(
 }
 
 static inline status_t
+driver_wait_vm(
+    vmi_instance_t vmi)
+{
+#ifdef ENABLE_SAFETY_CHECKS
+    if (!vmi->driver.initialized || !vmi->driver.wait_vm_ptr) {
+        dbprint(VMI_DEBUG_DRIVER, "WARNING: driver_wait_vm function not implemented.\n");
+        return VMI_FAILURE;
+    }
+#endif
+
+    return vmi->driver.wait_vm_ptr(vmi);
+}
+
+static inline status_t
 driver_events_listen(
     vmi_instance_t vmi,
     uint32_t timeout)

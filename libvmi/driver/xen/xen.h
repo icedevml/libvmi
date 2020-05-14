@@ -174,6 +174,8 @@ status_t xen_set_domain_debug_control(
 status_t xen_set_access_required(
     vmi_instance_t vmi,
     bool required);
+status_t xen_wait_vm(
+    vmi_instance_t vmi);
 
 static inline status_t
 driver_xen_setup(vmi_instance_t vmi)
@@ -207,6 +209,7 @@ driver_xen_setup(vmi_instance_t vmi)
     driver.is_pv_ptr = &xen_is_pv;
     driver.pause_vm_ptr = &xen_pause_vm;
     driver.resume_vm_ptr = &xen_resume_vm;
+    driver.wait_vm_ptr = &xen_wait_vm;
     driver.set_access_required_ptr = &xen_set_access_required;
     vmi->driver = driver;
     return VMI_SUCCESS;

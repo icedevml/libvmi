@@ -424,6 +424,18 @@ vmi_pause_vm(
 }
 
 status_t
+vmi_wait_vm(
+    vmi_instance_t vmi)
+{
+#ifdef ENABLE_SAFETY_CHECKS
+    if (!vmi)
+        return VMI_FAILURE;
+#endif
+
+    return driver_wait_vm(vmi);
+}
+
+status_t
 vmi_resume_vm(
     vmi_instance_t vmi)
 {

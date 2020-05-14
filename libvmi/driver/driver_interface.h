@@ -127,6 +127,8 @@ typedef struct driver_interface {
         vmi_instance_t);
     status_t (*resume_vm_ptr) (
         vmi_instance_t);
+    status_t (*wait_vm_ptr) (
+        vmi_instance_t);
     status_t (*events_listen_ptr)(
         vmi_instance_t,
         uint32_t);

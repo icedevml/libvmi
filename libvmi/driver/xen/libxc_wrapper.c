@@ -30,9 +30,10 @@ static status_t sanity_check(xen_instance_t *xen)
     libxc_wrapper_t *w = &xen->libxcw;
 
     if ( !w->xc_interface_open || !w->xc_interface_close || !w->xc_version ||
-            !w->xc_map_foreign_range || !w->xc_vcpu_getcontext || !w->xc_vcpu_setcontext ||
-            !w->xc_domain_hvm_getcontext || !w->xc_domain_hvm_getcontext_partial ||
-            !w->xc_domain_hvm_setcontext || !w->xc_domain_getinfo || !w->xc_domain_getinfolist ||
+            !w->xc_map_foreign_range || !w->xc_vcpu_getinfo || !w->xc_vcpu_getcontext ||
+	    !w->xc_vcpu_setcontext || !w->xc_domain_hvm_getcontext ||
+	    !w->xc_domain_hvm_getcontext_partial || !w->xc_domain_hvm_setcontext ||
+	    !w->xc_domain_getinfo || !w->xc_domain_getinfolist ||
             !w->xc_domctl || !w->xc_domain_pause || !w->xc_domain_unpause )
         return ret;
 
@@ -158,6 +159,7 @@ status_t create_libxc_wrapper(xen_instance_t *xen)
     wrapper->xc_map_foreign_pages = dlsym(wrapper->handle, "xc_map_foreign_pages");
     wrapper->xc_map_foreign_range = dlsym(wrapper->handle, "xc_map_foreign_range");
     wrapper->xc_domain_get_tsc_info = dlsym(wrapper->handle, "xc_domain_get_tsc_info");
+    wrapper->xc_vcpu_getinfo = dlsym(wrapper->handle, "xc_vcpu_getinfo");
     wrapper->xc_vcpu_getcontext = dlsym(wrapper->handle, "xc_vcpu_getcontext");
     wrapper->xc_vcpu_setcontext = dlsym(wrapper->handle, "xc_vcpu_setcontext");
     wrapper->xc_domain_hvm_getcontext = dlsym(wrapper->handle, "xc_domain_hvm_getcontext");

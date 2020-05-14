@@ -53,6 +53,9 @@ typedef struct {
     (xc_interface *xch, uint32_t domid, uint32_t *tsc_mode, uint64_t *elapsed_nsec,
      uint32_t *gtsc_khz, uint32_t *incarnation);
 
+    int (*xc_vcpu_getinfo)
+    (xc_interface *xch, uint32_t domid, uint32_t vcpu, xc_vcpuinfo_t *info);
+
     int (*xc_vcpu_getcontext)
     (xc_interface *xch, uint32_t domid, uint32_t vcpu, vcpu_guest_context_any_t *ctxt);
 

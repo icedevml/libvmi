@@ -2327,6 +2327,9 @@ status_t vmi_pause_vm(
 status_t vmi_resume_vm(
     vmi_instance_t vmi) NOEXCEPT;
 
+status_t vmi_wait_vm(
+    vmi_instance_t vmi) NOEXCEPT;
+
 /**
  * Removes all entries from LibVMI's internal virtual to physical address
  * cache.  This is generally only useful if you believe that an entry in
