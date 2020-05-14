@@ -2774,7 +2774,7 @@ xen_wait_vm(
         } while (!info.blocked && !info.running && info.online);
     }
 
-    errprint("success after %d iterations for total %d vCPUs\n", iter, dominfo.max_vcpu_id);
+    errprint("success after %d iterations for total %d vCPUs\n", iter, dominfo.max_vcpu_id+1);
     return VMI_SUCCESS;
 }
 
