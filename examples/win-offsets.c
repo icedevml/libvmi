@@ -80,13 +80,13 @@ void sigint_handler()
 
 event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
 {
-    vmi_pause_vm(vmi);
+    dp("CR#: %llx, VCPU: %d\n", event->reg_event.value, event->vcpu_id);
 
     if (event->vcpu_id != 0) {
         /* LibVMI initialization procedure strongly
          * relies on reading CPU context for VCPU 0
          * so we only do care about this one. */
-        goto failed;
+        return VMI_EVENT_RESPONSE_NONE;
     }
 
     addr_t gs_base;
@@ -163,11 +163,12 @@ event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
      * Remove CR3 event and leave the VM paused inside System process,
      * to make it easy for LibVMI to detect all necessary offsets.
      */
+    dp("Cleared event\n");
+    vmi_pause_vm(vmi);
     vmi_clear_event(vmi, event, NULL);
     return VMI_EVENT_RESPONSE_NONE;
 
 failed:
-    vmi_resume_vm(vmi);
     return VMI_EVENT_RESPONSE_NONE;
 }
 
@@ -304,8 +305,6 @@ int main(int argc, char **argv)
     if ( vmi_are_events_pending(vmi) > 0 )
         vmi_events_listen(vmi, 0);
 
-    //vmi_clear_event(vmi, &cr3_event, NULL);
-
     // the vm is already paused if we've got here
     os = vmi_init_os(vmi, VMI_CONFIG_GHASHTABLE, config, NULL);
     if (VMI_OS_WINDOWS != os) {
@@ -389,7 +388,8 @@ int main(int argc, char **argv)
 
     vmi_resume_vm(vmi);
 
-    sleep(1);
+//    while (vmi_are_events_pending(vmi) > 0);
+    //sleep(1);
 
     rc = 0;
 
