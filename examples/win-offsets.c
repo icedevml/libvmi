@@ -67,7 +67,7 @@ void dp(const char* format, ...)
 
 void clean_up(void)
 {
-    vmi_resume_vm(vmi);
+    //vmi_resume_vm(vmi);
     vmi_destroy(vmi);
     if (config)
         g_hash_table_destroy(config);
@@ -164,7 +164,7 @@ event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t *event)
      * Remove CR3 event and leave the VM paused inside System process,
      * to make it easy for LibVMI to detect all necessary offsets.
      */
-    //vmi_clear_event(vmi, event, NULL);
+    vmi_clear_event(vmi, event, NULL);
     return VMI_EVENT_RESPONSE_NONE;
 
 failed:
@@ -305,7 +305,7 @@ int main(int argc, char **argv)
     if ( vmi_are_events_pending(vmi) > 0 )
         vmi_events_listen(vmi, 0);
 
-    vmi_clear_event(vmi, &cr3_event, NULL);
+    //vmi_clear_event(vmi, &cr3_event, NULL);
 
     // the vm is already paused if we've got here
     os = vmi_init_os(vmi, VMI_CONFIG_GHASHTABLE, config, NULL);
@@ -387,6 +387,13 @@ int main(int argc, char **argv)
         printf("Failed to get most essential fields\n");
         goto done;
     }
+
+    vmi_resume_vm(vmi);
+
+    /* for (int i = 0; i < 500; i++) {
+        vmi_events_listen(vmi, 0);
+    } */
+    sleep(1);
 
     rc = 0;
 
