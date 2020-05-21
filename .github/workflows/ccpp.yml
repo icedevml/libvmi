@@ -16,6 +16,7 @@ jobs:
         path: libvmi
     - name: configure
       run: |
+        export DEBIAN_FRONTEND=noninteractive
         apt-get update
     - name: configure2
       run: |
