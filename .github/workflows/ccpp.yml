@@ -1,0 +1,25 @@
+name: Package build
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-18.04
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        container: [debian:buster, ubuntu:bionic, ubuntu:focal]
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        path: libvmi
+    - name: configure
+      run: |
+        cd libvmi
+        touch autogen.sh && chmod +x autogen.sh
+        dpkg-buildpackage -us -uc
