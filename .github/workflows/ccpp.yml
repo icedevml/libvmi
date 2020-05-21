@@ -16,7 +16,7 @@ jobs:
         path: libvmi
     - name: configure
       run: |
-        apt-get update && apt-get install dpkg-buildpackage debhelper (>= 10) libvirt-dev libtool cmake flex bison libglib2.0-dev libjson-c-dev
+        apt-get update && apt-get install dpkg-buildpackage debhelper libvirt-dev libtool cmake flex bison libglib2.0-dev libjson-c-dev
         cd libvmi
         touch autogen.sh && chmod +x autogen.sh
         dpkg-buildpackage -us -uc
