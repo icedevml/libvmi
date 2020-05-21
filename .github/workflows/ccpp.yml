@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        container: [debian:buster, ubuntu:bionic, ubuntu:focal]
+        container: ["debian:buster", "ubuntu:bionic", "ubuntu:focal"]
     steps:
     - uses: actions/checkout@v2
       with:
