@@ -16,14 +16,13 @@ jobs:
         path: libvmi
     - name: configure
       run: |
-        export DEBIAN_FRONTEND=noninteractive
         apt-get update
     - name: configure2
       run: |
-        apt-get install -y dpkg-dev
+        DEBIAN_FRONTEND=noninteractive apt-get install -y dpkg-dev
     - name: configure3
       run: |
-        apt-get install -y debhelper libvirt-dev libtool cmake flex bison libglib2.0-dev libjson-c-dev
+        DEBIAN_FRONTEND=noninteractive apt-get install -y debhelper libvirt-dev libtool cmake flex bison libglib2.0-dev libjson-c-dev
         cd libvmi
         touch autogen.sh && chmod +x autogen.sh
         dpkg-buildpackage -us -uc
