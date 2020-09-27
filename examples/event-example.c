@@ -207,47 +207,6 @@ int main (int argc, char **argv)
 
     printf("LibVMI init succeeded!\n");
 
-    // Get the value of lstar and cstar for the system.
-    // NOTE: all vCPUs have the same value for these registers
-    vmi_get_vcpureg(vmi, &lstar, MSR_LSTAR, 0);
-    vmi_get_vcpureg(vmi, &cstar, MSR_CSTAR, 0);
-    vmi_get_vcpureg(vmi, &sysenter_ip, SYSENTER_EIP, 0);
-    printf("vcpu 0 MSR_LSTAR == %llx\n", (unsigned long long)lstar);
-    printf("vcpu 0 MSR_CSTAR == %llx\n", (unsigned long long)cstar);
-    printf("vcpu 0 MSR_SYSENTER_IP == %llx\n", (unsigned long long)sysenter_ip);
-
-    vmi_translate_ksym2v(vmi, "ia32_sysenter_target", &ia32_sysenter_target);
-    printf("ksym ia32_sysenter_target == %llx\n", (unsigned long long)ia32_sysenter_target);
-
-    /* Per Linux ABI, this VA represents the start of the vsyscall page
-     *  If vsyscall support is enabled (deprecated or disabled on many newer
-     *  3.0+ kernels), it is accessible at this address in every process.
-     */
-    vsyscall = 0xffffffffff600000;
-
-    // Translate to a physical address.
-    vmi_translate_kv2p(vmi, lstar, &phys_lstar);
-    printf("Physical LSTAR == %llx\n", (unsigned long long)phys_lstar);
-
-    vmi_translate_kv2p(vmi, cstar, &phys_cstar);
-    printf("Physical CSTAR == %llx\n", (unsigned long long)phys_cstar);
-
-    vmi_translate_kv2p(vmi, sysenter_ip, &phys_sysenter_ip);
-    printf("Physical SYSENTER_IP == %llx\n", (unsigned long long)phys_sysenter_ip);
-
-    vmi_translate_kv2p(vmi,ia32_sysenter_target, &phys_ia32_sysenter_target);
-    printf("Physical ia32_sysenter_target == %llx\n", (unsigned long long)ia32_sysenter_target);
-    vmi_translate_kv2p(vmi,vsyscall,&phys_vsyscall);
-    printf("Physical phys_vsyscall == %llx\n", (unsigned long long)phys_vsyscall);
-
-
-    // Get only the page that the handler starts.
-    printf("LSTAR Physical PFN == %llx\n", (unsigned long long)(phys_lstar >> 12));
-    printf("CSTAR Physical PFN == %llx\n", (unsigned long long)(phys_cstar >> 12));
-    printf("SYSENTER_IP Physical PFN == %llx\n", (unsigned long long)(phys_sysenter_ip >> 12));
-    printf("phys_vsyscall Physical PFN == %llx\n", (unsigned long long)(phys_vsyscall >> 12));
-    printf("phys_ia32_sysenter_target Physical PFN == %llx\n", (unsigned long long)(phys_ia32_sysenter_target >> 12));
-
     /* Configure an event to track when the process is running.
      * (The CR3 register is updated on task context switch, allowing
      *  us to follow as various tasks are scheduled and run upon the CPU)
@@ -294,14 +253,6 @@ int main (int argc, char **argv)
 
     if ( VMI_FAILURE == vmi_register_event(vmi, &cr3_event) )
         printf("Failed to register CR3 event\n");
-    if ( phys_sysenter_ip && VMI_FAILURE == vmi_register_event(vmi, &msr_syscall_sysenter_event) )
-        printf("Failed to register memory event on MSR_SYSENTER_IP page\n");
-    if ( phys_lstar && VMI_FAILURE == vmi_register_event(vmi, &msr_syscall_lm_event) )
-        printf("Failed to register memory event on MSR_LSTAR page\n");
-    if ( phys_ia32_sysenter_target && VMI_FAILURE == vmi_register_event(vmi, &kernel_sysenter_target_event) )
-        printf("Failed to register memory event on ia32_sysenter_target page\n");
-    if ( phys_vsyscall && VMI_FAILURE == vmi_register_event(vmi, &kernel_vsyscall_event) )
-        printf("Failed to register memory event on vsyscall page\n");
 
     while (!interrupted) {
         printf("Waiting for events...\n");
@@ -319,10 +270,6 @@ int main (int argc, char **argv)
         vmi_events_listen(vmi, 0);
 
     vmi_clear_event(vmi, &cr3_event, NULL);
-    vmi_clear_event(vmi, &msr_syscall_lm_event, NULL);
-    vmi_clear_event(vmi, &msr_syscall_sysenter_event, NULL);
-    vmi_clear_event(vmi, &kernel_sysenter_target_event, NULL);
-    vmi_clear_event(vmi, &kernel_vsyscall_event, NULL);
 
     vmi_resume_vm(vmi);
 
